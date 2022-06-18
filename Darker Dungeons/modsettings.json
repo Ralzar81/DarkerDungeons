@@ -1,0 +1,59 @@
+{
+    "Version": "1.0",
+    "Sections":
+    [       
+        {
+            "Name": "HouseAmbientLightAdjustment",
+            "Description": "Make the Dungen Ambient Light setting in DFU also affect house ambient lights.",
+            "IsAdvanced": false,
+            "Keys":
+            [            
+                {
+                    "Value": true,
+                    "Name": "MatchInteriorToDungeonLight",
+                    "Description": "Match Indoor Ambient Light to Dungeon Light setting",
+                    "$version": "v1",
+                    "$type": "DaggerfallWorkshop.Game.Utility.ModSupport.ModSettings.ToggleKey"
+                }
+            ],
+            "$version": "v1"
+        },
+        {
+            "Name": " ",
+            "Description": "",
+            "IsAdvanced": false,
+            "Keys":
+            [
+                {
+                    "Value": false,
+                    "Name": " ",
+                    "Description": " ",
+                    "$version": "v1",
+                    "$type": "DaggerfallWorkshop.Game.Utility.ModSupport.ModSettings.TextBox"
+                },
+            ],
+            "$version": "v1"
+        },
+        {
+            "Name": "AutoDousingOrRemoval",
+            "Description": "Torches, candles and lamps are doused or randomly removed unless a humanoid starts nearby.",
+            "IsAdvanced": false,
+            "Keys":
+            [
+                {
+                    "Options": [
+                    "Off",
+                    "Doused only",
+                    "Doused or Randomly Removed"
+                    ],
+                    "Value": 2,
+                    "Name": "AutoDouseOrRemove",
+                    "Description": "Set what happens on entering a dungeon.",
+                    "$version": "v1",
+                    "$type": "DaggerfallWorkshop.Game.Utility.ModSupport.ModSettings.MultipleChoiceKey"
+                }
+            ],
+            "$version": "v1"
+        }     
+    ]
+}

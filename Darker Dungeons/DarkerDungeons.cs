@@ -12,6 +12,7 @@ using DaggerfallWorkshop;
 using System.Collections.Generic;
 using DaggerfallConnect;
 using DaggerfallWorkshop.Game.Entity;
+using DaggerfallWorkshop.Game.Utility.ModSupport.ModSettings;
 
 namespace DarkerDungeons
 {
@@ -27,6 +28,8 @@ namespace DarkerDungeons
     {
         static Mod mod;
         static DarkerDungeons instance;
+        static bool interiorLightAdjusting;
+        static int autoDouse;
 
         static int dungeonID;
         static List<Vector3> deactivatedLightsPos;
@@ -147,6 +150,13 @@ namespace DarkerDungeons
 
         void Awake()
         {
+            ModSettings settings = mod.GetSettings();
+
+            interiorLightAdjusting = settings.GetValue<bool>("HouseAmbientLightAdjustment", "MatchInteriorToDungeonLight");
+            autoDouse = settings.GetValue<int>("AutoDousingOrRemoval", "AutoDouseOrRemove");
+            Debug.Log("[Darker Dungeons] Mod setting MatchInteriorToDungeonLight = " + interiorLightAdjusting.ToString());
+            Debug.Log("[Darker Dungeons] Mod setting AutoDouseOrRemove = " + autoDouse.ToString());
+
             Mod iil = ModManager.Instance.GetMod("Improved Interior Lighting");
             if (iil != null)
             {
@@ -164,6 +174,14 @@ namespace DarkerDungeons
 
 
             PlayerEnterExit.OnTransitionDungeonInterior += SetLightCheckFlag;
+            if (interiorLightAdjusting)
+            {
+                PlayerAmbientLight ambientLights = (PlayerAmbientLight)FindObjectOfType(typeof(PlayerAmbientLight));
+                ambientLights.InteriorNightAmbientLight = ambientLights.InteriorAmbientLight * (Mathf.Min(1.0f, DaggerfallUnity.Settings.DungeonAmbientLightScale + 0.1f));
+                ambientLights.InteriorAmbientLight = ambientLights.InteriorAmbientLight * (Mathf.Min(1.0f, DaggerfallUnity.Settings.DungeonAmbientLightScale + 0.3f));
+                //PlayerEnterExit.OnTransitionInterior += AdjustAmbientLight;
+            }
+
 
             mod.IsReady = true;
         }
@@ -195,6 +213,13 @@ namespace DarkerDungeons
                     DaggerfallUI.MessageBox("The Torch Taker mod is not compatible with Darker Dungeons. Please restart DFU and deactivate Torch Taker.", true);
             }
         }
+
+        //private static void AdjustAmbientLight(PlayerEnterExit.TransitionEventArgs args)
+        //{
+        //    PlayerAmbientLight ambientLights = (PlayerAmbientLight)FindObjectOfType(typeof(PlayerAmbientLight));
+        //    ambientLights.InteriorNightAmbientLight = ambientLights.InteriorAmbientLight * (Mathf.Min(1.0f, DaggerfallUnity.Settings.DungeonAmbientLightScale + 0.1f));
+        //    ambientLights.InteriorAmbientLight = ambientLights.InteriorAmbientLight * (Mathf.Min(1.0f, DaggerfallUnity.Settings.DungeonAmbientLightScale + 0.3f));
+        //}
 
         private static void RemoveVanillaLightSources(PlayerEnterExit.TransitionEventArgs args)
         {
@@ -243,23 +268,27 @@ namespace DarkerDungeons
         {
             deactivatedLightsPos = new List<Vector3>();
             dousedLightsPos = new List<Vector3>();
-            bool humanoidDungeon = HumanoidDungeon();
-            GameObject[] lightObjects = (GameObject[])FindObjectsOfType(typeof(GameObject));
-            foreach (GameObject obj in lightObjects)
+            if (autoDouse > 0)
             {
-                if (obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210,") && !HumanoidsNear(obj.transform.position))
+                bool humanoidDungeon = HumanoidDungeon();
+                GameObject[] lightObjects = (GameObject[])FindObjectsOfType(typeof(GameObject));
+                foreach (GameObject obj in lightObjects)
                 {
-                    if (!humanoidDungeon)
+                    if (obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210,") && !HumanoidsNear(obj.transform.position))
                     {
-                        if (DaggerfallWorkshop.Game.Utility.Dice100.SuccessRoll(50))
+                        if (!humanoidDungeon)
+                        {
+                            if (autoDouse == 1 || DaggerfallWorkshop.Game.Utility.Dice100.SuccessRoll(50))
+                                DouseLight(obj);
+                            else
+                                DeactivateLight(obj);
+                        }
+                        else if (humanoidDungeon && Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, obj.transform.position) > 5)
                             DouseLight(obj);
-                        else
-                            DeactivateLight(obj);
                     }
-                    else if (humanoidDungeon && Vector3.Distance(GameManager.Instance.PlayerObject.transform.position, obj.transform.position) > 5)
-                        DouseLight(obj);
                 }
             }
+            
             Debug.Log("[Darker Dungeons] " + deactivatedLightsPos.Count.ToString() + " in deactivatedLightsPos");
             Debug.Log("[Darker Dungeons] " + dousedLightsPos.Count.ToString() + " in dousedLightsPos");
         }
@@ -274,7 +303,14 @@ namespace DarkerDungeons
             string itemName = LightNameFromInt(lightType);
             if (lightType > 0)
             {
-                if (dousedLightsPos.Find(x => x == lightObj.transform.position) != lightObj.transform.position)
+                if (!playerEnterExit.IsPlayerInside && lightType >= 4) //brazier, campfire or chandelier
+                {
+                    if (activateMode == PlayerActivateModes.Info)
+                        DaggerfallUI.AddHUDText("You see a burning " + itemName + ".");
+                    else
+                        ModManager.Instance.SendModMessage("Climates & Calories", "campPopup", hit);
+                }
+                else if (dousedLightsPos.Find(x => x == lightObj.transform.position) != lightObj.transform.position)
                 {
                     if (lightType == 1) //torch
                     {
@@ -349,6 +385,8 @@ namespace DarkerDungeons
                     {
                         if (activateMode == PlayerActivateModes.Info)
                             DaggerfallUI.AddHUDText("You see a burning " + itemName + ".");
+                        else
+                            ModManager.Instance.SendModMessage("Climates & Calories", "campPopup", hit);
                     }
 
                 }
@@ -440,53 +478,57 @@ namespace DarkerDungeons
                 else if (lightObj != null)
                 {
                     DaggerfallBillboard lightBillboard = lightObj.GetComponent<DaggerfallBillboard>();
-                    if (lightBillboard != null)
+                    if (lightBillboard.Summary.Record != 8)
                     {
-                        lightBillboard.SetMaterial(540, lightBillboard.Summary.Record);
-                        if (lightBillboard.Summary.Record == 4)
+                        if (lightBillboard != null)
                         {
-                            Vector3 candleScale = new Vector3(0.5f, 0.5f, 1f);
-                            lightBillboard.transform.gameObject.transform.localScale = candleScale;
+                            lightBillboard.SetMaterial(540, lightBillboard.Summary.Record);
+                            if (lightBillboard.Summary.Record >= 3 && lightBillboard.Summary.Record <= 5)
+                            {
+                                Debug.Log("Candle " + lightBillboard.Summary.Record);
+                                Vector3 candleScale = new Vector3(0.5f, 0.5f, 1f);
+                                lightBillboard.transform.gameObject.transform.localScale = candleScale;
+                            }
                         }
-                    }
 
-                    ParticleSystem[] lightParticles = lightObj.GetComponentsInChildren<ParticleSystem>(true);
-                    foreach (ParticleSystem lightParticle in lightParticles)
-                    {
-                        if (lightParticle != null)
-                            lightParticle.transform.gameObject.SetActive(false);
-                    }
-
-                    Light[] lightLights = lightObj.GetComponentsInChildren<Light>(true);
-                    foreach (Light lightLight in lightLights)
-                    {
-                        if (lightLight != null)
-                            lightLight.transform.gameObject.SetActive(false);
-                    }
-
-                    MeshRenderer[] lightMeshs = lightObj.GetComponentsInChildren<MeshRenderer>(true);
-                    foreach (MeshRenderer lightMesh in lightMeshs)
-                    {
-                        if (lightMesh != null)
+                        ParticleSystem[] lightParticles = lightObj.GetComponentsInChildren<ParticleSystem>(true);
+                        foreach (ParticleSystem lightParticle in lightParticles)
                         {
-                            Renderer lightMeshRend = lightMesh.transform.gameObject.GetComponent<Renderer>();
+                            if (lightParticle != null)
+                                lightParticle.transform.gameObject.SetActive(false);
+                        }
+
+                        Light[] lightLights = lightObj.GetComponentsInChildren<Light>(true);
+                        foreach (Light lightLight in lightLights)
+                        {
+                            if (lightLight != null)
+                                lightLight.transform.gameObject.SetActive(false);
+                        }
+
+                        MeshRenderer[] lightMeshs = lightObj.GetComponentsInChildren<MeshRenderer>(true);
+                        foreach (MeshRenderer lightMesh in lightMeshs)
+                        {
+                            if (lightMesh != null)
+                            {
+                                Renderer lightMeshRend = lightMesh.transform.gameObject.GetComponent<Renderer>();
                                 if (lightBillboard == null && lightMeshRend != null && lightMeshRend.material.shader != null && lightTypeInt == 1)
                                     lightMeshRend.material.shader = Shader.Find("Legacy Shaders/Diffuse");
+                            }
                         }
+
+                        Renderer lightRend = lightObj.GetComponent<Renderer>();
+                        if (lightBillboard == null && lightRend != null && lightRend.material.shader != null && lightTypeInt == 1)
+                            lightRend.material.shader = Shader.Find("Legacy Shaders/Diffuse");
+
+
+                        if (lightObj.GetComponent<AudioSource>() != null)
+                            lightObj.GetComponent<AudioSource>().mute = true;
+
+                        if (lightObj.GetComponent<BoxCollider>() == null)
+                            AddTrigger(lightObj);
+
+                        dousedLightsPos.Add(lightObj.transform.position);
                     }
-
-                    Renderer lightRend = lightObj.GetComponent<Renderer>();
-                    if (lightBillboard == null && lightRend != null && lightRend.material.shader != null && lightTypeInt == 1)
-                        lightRend.material.shader = Shader.Find("Legacy Shaders/Diffuse");
-
-
-                    if (lightObj.GetComponent<AudioSource>() != null)
-                        lightObj.GetComponent<AudioSource>().mute = true;
-
-                    if (lightObj.GetComponent<BoxCollider>() == null)
-                        AddTrigger(lightObj);
-
-                    dousedLightsPos.Add(lightObj.transform.position);
                 }
             }
         }
@@ -499,54 +541,57 @@ namespace DarkerDungeons
                 Debug.Log("position clicked = " + lightObj.transform.position.ToString());
 
                 DaggerfallBillboard lightBillboard = lightObj.GetComponent<DaggerfallBillboard>();
-                if (lightBillboard != null)
+                if (lightBillboard.Summary.Record != 8)
                 {
-                    if (lightBillboard.Summary.Record == 7)
-                        lightBillboard.SetMaterial(210, 23);
-                    else if (lightBillboard.Summary.Record == 10)
-                        lightBillboard.SetMaterial(210, 11);
-                    else
-                        lightBillboard.SetMaterial(210, lightBillboard.Summary.Record);
-                    if (lightBillboard.Summary.Record == 4)
+                    if (lightBillboard != null)
                     {
-                        Vector3 candleScale = new Vector3(1f, 1f, 1f);
-                        lightBillboard.transform.gameObject.transform.localScale = candleScale;
+                        if (lightBillboard.Summary.Record == 7)
+                            lightBillboard.SetMaterial(210, 23);
+                        else if (lightBillboard.Summary.Record == 10)
+                            lightBillboard.SetMaterial(210, 11);
+                        else
+                            lightBillboard.SetMaterial(210, lightBillboard.Summary.Record);
+                        if (lightBillboard.Summary.Record >= 3 && lightBillboard.Summary.Record <= 5)
+                        {
+                            Vector3 candleScale = new Vector3(1f, 1f, 1f);
+                            lightBillboard.transform.gameObject.transform.localScale = candleScale;
+                        }
                     }
-                }
 
-                ParticleSystem[] lightParticles = lightObj.GetComponentsInChildren<ParticleSystem>(true);
-                foreach (ParticleSystem lightParticle in lightParticles)
-                {
-                    if (lightParticle != null)
-                        lightParticle.transform.gameObject.SetActive(true);
-                }
-
-                Light[] lightLights = lightObj.GetComponentsInChildren<Light>(true);
-                foreach (Light lightLight in lightLights)
-                {
-                    if (lightLight != null)
-                        lightLight.transform.gameObject.SetActive(true);
-                }
-
-                MeshRenderer[] lightMeshs = lightObj.GetComponentsInChildren<MeshRenderer>(true);
-                foreach (MeshRenderer lightMesh in lightMeshs)
-                {
-                    if (lightMesh != null)
+                    ParticleSystem[] lightParticles = lightObj.GetComponentsInChildren<ParticleSystem>(true);
+                    foreach (ParticleSystem lightParticle in lightParticles)
                     {
-                        Renderer lightMeshRend = lightMesh.transform.gameObject.GetComponent<Renderer>();
-                        if (lightBillboard == null && lightMeshRend != null && lightMeshRend.material.shader != null && lightTypeInt == 1)
-                            lightMeshRend.material.shader = Shader.Find("Legacy Shaders/VertexLit");
+                        if (lightParticle != null)
+                            lightParticle.transform.gameObject.SetActive(true);
                     }
+
+                    Light[] lightLights = lightObj.GetComponentsInChildren<Light>(true);
+                    foreach (Light lightLight in lightLights)
+                    {
+                        if (lightLight != null)
+                            lightLight.transform.gameObject.SetActive(true);
+                    }
+
+                    MeshRenderer[] lightMeshs = lightObj.GetComponentsInChildren<MeshRenderer>(true);
+                    foreach (MeshRenderer lightMesh in lightMeshs)
+                    {
+                        if (lightMesh != null)
+                        {
+                            Renderer lightMeshRend = lightMesh.transform.gameObject.GetComponent<Renderer>();
+                            if (lightBillboard == null && lightMeshRend != null && lightMeshRend.material.shader != null && lightTypeInt == 1)
+                                lightMeshRend.material.shader = Shader.Find("Legacy Shaders/VertexLit");
+                        }
+                    }
+
+                    Renderer lightRend = lightObj.GetComponent<Renderer>();
+                    if (lightBillboard == null && lightRend != null && lightRend.material.shader != null && lightTypeInt == 1)
+                        lightObj.GetComponent<Renderer>().material.shader = Shader.Find("Legacy Shaders/VertexLit");
+
+                    if (lightObj.GetComponent<AudioSource>() != null)
+                        lightObj.GetComponent<AudioSource>().mute = false;
+
+                    dousedLightsPos.Remove(lightObj.transform.position);
                 }
-
-                Renderer lightRend = lightObj.GetComponent<Renderer>();                    
-                if (lightBillboard == null && lightRend != null && lightRend.material.shader != null && lightTypeInt == 1)
-                    lightObj.GetComponent<Renderer>().material.shader = Shader.Find("Legacy Shaders/VertexLit");
-
-                if (lightObj.GetComponent<AudioSource>() != null)
-                    lightObj.GetComponent<AudioSource>().mute = false;                
-               
-                dousedLightsPos.Remove(lightObj.transform.position);
             }
         }
 
@@ -572,10 +617,10 @@ namespace DarkerDungeons
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=4]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=5]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=11]") ||
-                obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=19]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=21]"))
                 return 2;
             else if (
+                obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=8]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=12]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=13]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=14]") ||
@@ -601,7 +646,7 @@ namespace DarkerDungeons
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=9]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=10]") ||
                 obj.name.StartsWith("DaggerfallBillboard [TEXTURE.210, Index=23]"))
-                return 5;
+                return 6;
             else
                 return 0;
         }
